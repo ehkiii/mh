@@ -13,9 +13,9 @@ xcodebuild \
   -sdk iphoneos \
   -destination 'generic/platform=iOS' \
   -derivedDataPath build \
-  CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY="-" \
-  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGN_IDENTITY="" \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGNING_ALLOWED=NO \
   DEVELOPMENT_TEAM="" \
   ENABLE_USER_SCRIPT_SANDBOXING=NO \
   build | tee build.log | (command -v xcbeautify >/dev/null && xcbeautify || cat)
