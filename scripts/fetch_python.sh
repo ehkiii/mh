@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Downloads the official python.org iOS XCframework into ./Python.xcframework
-# PY_MINOR picks the minor version (default 3.13); the newest patch release is used.
+# PY_MINOR picks the minor version (default 3.15); the newest patch release is used.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY_MINOR="${PY_MINOR:-3.13}"
+PY_MINOR="${PY_MINOR:-3.15}"
 
 if [ -d Python.xcframework ]; then
   echo "Python.xcframework already present, skipping download"
