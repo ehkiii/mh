@@ -63,13 +63,9 @@ targets:
         CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
 
     postBuildScripts:
-      - name: Process Python libraries
+     - name: Process Python libraries
         basedOnDependencyAnalysis: false
         script: |
           set -ex
-          cat "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
-          export EXPANDED_CODE_SIGN_IDENTITY="-"
-          export CODE_SIGNING_ALLOWED="YES"
-          export CODE_SIGNING_REQUIRED="YES"
-          source "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
-          install_python Python.xcframework app app_packages
+          ls -la "$PROJECT_DIR/Python.xcframework"
+          find "$PROJECT_DIR/Python.xcframework" -maxdepth 4 -not -path '*/.*'
