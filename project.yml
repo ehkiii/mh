@@ -66,8 +66,10 @@ targets:
       - name: Process Python libraries
         basedOnDependencyAnalysis: false
         script: |
-          set -e
+          set -ex
+          cat "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
           export EXPANDED_CODE_SIGN_IDENTITY="-"
+          export CODE_SIGNING_ALLOWED="YES"
           export CODE_SIGNING_REQUIRED="YES"
           source "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
           install_python Python.xcframework app app_packages

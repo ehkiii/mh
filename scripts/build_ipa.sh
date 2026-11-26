@@ -18,7 +18,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   DEVELOPMENT_TEAM="" \
   ENABLE_USER_SCRIPT_SANDBOXING=NO \
-  build | tee build.log | (command -v xcbeautify >/dev/null && xcbeautify || cat)
+  build
 
 app="build/Build/Products/Release-iphoneos/SealPad.app"
 [ -d "$app" ] || { echo "error: $app not found" >&2; exit 1; }
