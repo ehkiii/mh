@@ -9,7 +9,7 @@ on:
     inputs:
       python_minor:
         description: "Python minor version to embed"
-        default: "3.13"
+        default: "3.15"
 
 concurrency:
   group: build-${{ github.ref }}
@@ -21,7 +21,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 45
     env:
-      PY_MINOR: ${{ inputs.python_minor || '3.13' }}
+      PY_MINOR: ${{ inputs.python_minor || '3.15' }}
 
     steps:
       - uses: actions/checkout@v4
