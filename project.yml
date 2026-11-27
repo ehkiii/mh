@@ -63,7 +63,7 @@ targets:
         CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
 
     postBuildScripts:
-     - name: Process Python libraries
+      - name: Process Python libraries
         basedOnDependencyAnalysis: false
         script: |
           set -ex
