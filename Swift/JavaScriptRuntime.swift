@@ -40,9 +40,15 @@ final class JavaScriptRuntime {
         guard let value, !value.isUndefined, !value.isNull else {
             return value?.isNull == true ? "null" : nil
         }
-        // Preserve arrays/objects across the Python boundary instead of
-        // collapsing them to JavaScript strings such as "[object Object]".
-        return value.toJSON() ?? value.toString()
+        // Serialize arrays/objects as JSON before crossing into Python.
+        // JSValue has no toJSON() method; invoke JavaScript's JSON.stringify.
+        if let stringify = js.evaluateScript("JSON.stringify"),
+           let json = stringify.call(withArguments: [value]),
+           !json.isUndefined, !json.isNull,
+           let serialized = json.toString() {
+            return serialized
+        }
+        return value.toString()
     }
 
     private func makeContext() -> JSContext {
