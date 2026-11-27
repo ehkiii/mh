@@ -1,0 +1,72 @@
+name: SealPad
+
+options:
+  bundleIdPrefix: dev.sealpad      # change to something of your own
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+targets:
+  SealPad:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+
+    sources:
+      - path: Swift
+      - path: ObjC
+      # Copied into the bundle as plain folders: app/bridge.py, app_packages/yt_dlp, ...
+      - path: app
+        type: folder
+        buildPhase: resources
+      - path: app_packages
+        type: folder
+        buildPhase: resources
+
+    dependencies:
+      - sdk: JavaScriptCore.framework
+      - framework: Python.xcframework
+        embed: true
+        codeSign: true
+
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: SealPad
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIFileSharingEnabled: true               # Downloads show up in the Files app
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.sealpad.app
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: ObjC/SealPad-Bridging-Header.h
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Settings required by CPython's iOS embedding guide
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        ENABLE_TESTABILITY: YES
+        FRAMEWORK_SEARCH_PATHS: "$(PROJECT_DIR)"
+        HEADER_SEARCH_PATHS: '"$(BUILT_PRODUCTS_DIR)/Python.framework/Headers" "$(SRCROOT)/ObjC"'
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
+
+    postBuildScripts:
+      - name: Process Python libraries
+        basedOnDependencyAnalysis: false
+        script: |
+          set -ex
+          ls -la "$PROJECT_DIR/Python.xcframework"
+          find "$PROJECT_DIR/Python.xcframework" -maxdepth 4 -not -path '*/.*'
