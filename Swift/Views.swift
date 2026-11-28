@@ -4,33 +4,21 @@ import SwiftUI
 
 // MARK: - Glass helpers
 
-/// Colorful backdrop so the glass has something to refract.
+/// Plain system background: light in light mode, dark in dark mode.
 struct AppBackground: View {
-    @Environment(\.colorScheme) private var scheme
-
-    private var colors: [Color] {
-        scheme == .dark
-        ? [.indigo.opacity(0.9), .purple.opacity(0.7), .blue.opacity(0.8),
-           .teal.opacity(0.6), .indigo, .pink.opacity(0.6),
-           .blue.opacity(0.7), .purple.opacity(0.8), .teal.opacity(0.7)]
-        : [.cyan.opacity(0.6), .blue.opacity(0.5), .purple.opacity(0.5),
-           .mint.opacity(0.6), .white.opacity(0.8), .pink.opacity(0.5),
-           .teal.opacity(0.5), .indigo.opacity(0.4), .orange.opacity(0.4)]
-    }
-
     var body: some View {
-        MeshGradient(
-            width: 3, height: 3,
-            points: [[0, 0], [0.5, 0], [1, 0],
-                     [0, 0.5], [0.6, 0.45], [1, 0.5],
-                     [0, 1], [0.5, 1], [1, 1]],
-            colors: colors
-        )
-        .ignoresSafeArea()
+        Color(.systemGroupedBackground).ignoresSafeArea()
     }
 }
 
 extension View {
+    /// A padded plain card (no Liquid Glass).
+    func plainCard(cornerRadius: CGFloat = 20) -> some View {
+        self.padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: cornerRadius))
+    }
+
     /// A padded Liquid Glass card.
     func glassCard(cornerRadius: CGFloat = 24, tint: Color? = nil, interactive: Bool = false) -> some View {
         var glass: Glass = .regular
@@ -54,7 +42,7 @@ struct GlassProgressBar: View {
             .overlay(alignment: .leading) {
                 GeometryReader { geo in
                     Capsule()
-                        .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing))
+                        .fill(.tint)
                         .frame(width: geo.size.width * CGFloat(min(max(value, 0), 1)))
                 }
             }
@@ -559,7 +547,7 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            GlassEffectContainer(spacing: 16) {
+            Group {
                 VStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Appearance").font(.headline)
@@ -570,7 +558,7 @@ struct SettingsView: View {
                         Text("Default follows your device's light or dark setting.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
-                    .glassCard()
+                    .plainCard()
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("yt-dlp").font(.headline)
@@ -582,7 +570,7 @@ struct SettingsView: View {
                                   systemImage: "arrow.triangle.2.circlepath")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(manager.isUpdating)
 
@@ -593,7 +581,7 @@ struct SettingsView: View {
                             Text(err).font(.footnote).foregroundStyle(.red)
                         }
                     }
-                    .glassCard()
+                    .plainCard()
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Custom yt-dlp arguments").font(.headline)
@@ -602,11 +590,11 @@ struct SettingsView: View {
                             .autocorrectionDisabled()
                             .font(.system(.body, design: .monospaced))
                             .padding(12)
-                            .background(.quaternary, in: .rect(cornerRadius: 14))
+                            .background(Color(.tertiarySystemGroupedBackground), in: .rect(cornerRadius: 14))
                         Text("Parsed like the command line and applied to every download. Options that need ffmpeg won't work yet.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
-                    .glassCard()
+                    .plainCard()
                 }
             }
             .padding()
