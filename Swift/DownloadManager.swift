@@ -39,18 +39,29 @@ struct FormatInfo: Identifiable, Decodable, Hashable {
     let ext: String?
     let resolution: String?
     let height: Int?
+    let fps: Double?
     let vcodec: String?
     let acodec: String?
     let filesize: Int?
     let tbr: Double?
+    let abr: Double?
     let note: String?
+    let proto: String?
 
-    /// H.264 video-only mp4: can be merged with AAC audio on the device (no ffmpeg).
-    var isMuxableVideo: Bool {
-        hasVideo && !hasAudio && ext == "mp4" && (vcodec?.hasPrefix("avc1") ?? false)
+    enum CodingKeys: String, CodingKey {
+        case id, ext, resolution, height, fps, vcodec, acodec, filesize, tbr, abr, note
+        case proto = "protocol"
     }
+
     var hasVideo: Bool { vcodec != nil && vcodec != "none" }
     var hasAudio: Bool { acodec != nil && acodec != "none" }
+    /// Plain https download (not an HLS/DASH manifest)
+    var isHTTP: Bool { proto == nil || proto == "https" || proto == "http" }
+    var isAAC: Bool { hasAudio && !hasVideo && ext == "m4a" && isHTTP }
+    /// H.264 video-only mp4: can be merged with AAC audio on the device (no ffmpeg).
+    var isMuxableVideo: Bool {
+        hasVideo && !hasAudio && ext == "mp4" && isHTTP && (vcodec?.hasPrefix("avc1") ?? false)
+    }
 }
 
 struct MediaInfo: Decodable {
@@ -99,7 +110,8 @@ final class DownloadManager {
     // MARK: downloads
 
     func start(url: String, mode: DownloadMode, formatID: String? = nil, title: String? = nil,
-               quality: VideoQuality = .best, audio: AudioFormat = .m4a) {
+               quality: VideoQuality = .best, audio: AudioFormat = .m4a,
+               noPlaylist: Bool = false) {
         let item = DownloadItem(url: url, title: title ?? url)
         items.insert(item, at: 0)
 
@@ -109,6 +121,7 @@ final class DownloadManager {
             "mode": mode.rawValue,
             "max_height": quality.rawValue,
             "audio_format": audio.rawValue,
+            "noplaylist": noPlaylist,
             "custom_args": UserDefaults.standard.string(forKey: "customArgs") ?? "",
         ]
         if let formatID { payload["format_id"] = formatID }

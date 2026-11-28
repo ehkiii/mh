@@ -65,10 +65,8 @@ struct RootView: View {
 struct DownloadsView: View {
     @Environment(DownloadManager.self) private var manager
     @State private var urlText = ""
-    @State private var mode: DownloadMode = .video
-    @State private var showFormats = false
-    @AppStorage("videoQuality") private var qualityRaw = VideoQuality.best.rawValue
-    @AppStorage("audioFormat") private var audioRaw = AudioFormat.m4a.rawValue
+    @State private var previewURL = ""
+    @State private var showPreview = false
 
     private var trimmed: String { urlText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -103,47 +101,15 @@ struct DownloadsView: View {
             }
             .disabled(!manager.items.contains { !$0.isActive })
         }
-        .sheet(isPresented: $showFormats) {
-            FormatPickerView(url: trimmed, mode: mode)
-                .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showPreview) {
+            PreviewSheet(url: previewURL) { urlText = "" }
         }
     }
 
-    @ViewBuilder private var optionsRow: some View {
-        HStack(spacing: 12) {
-            if mode == .video {
-                Menu {
-                    Picker("Quality", selection: $qualityRaw) {
-                        ForEach(VideoQuality.allCases) { Text($0.title).tag($0.rawValue) }
-                    }
-                } label: {
-                    optionLabel("Quality", VideoQuality(rawValue: qualityRaw)?.title ?? "Best available")
-                }
-                optionLabel("Format", "MP4").opacity(0.7)
-            } else {
-                Menu {
-                    Picker("Format", selection: $audioRaw) {
-                        ForEach(AudioFormat.allCases) { Text($0.title).tag($0.rawValue) }
-                    }
-                    Button("MP3 (needs ffmpeg, not built in yet)") {}
-                        .disabled(true)
-                } label: {
-                    optionLabel("Format", AudioFormat(rawValue: audioRaw)?.title ?? "M4A (AAC)")
-                }
-            }
-        }
-    }
-
-    private func optionLabel(_ title: String, _ value: String) -> some View {
-        HStack(spacing: 6) {
-            Text(title).foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            Text(value).bold().lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down").font(.caption2)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .glassEffect(.regular.interactive(), in: .capsule)
+    private func openPreview() {
+        guard !trimmed.isEmpty else { return }
+        previewURL = trimmed
+        showPreview = true
     }
 
     private var inputArea: some View {
@@ -155,6 +121,8 @@ struct DownloadsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .submitLabel(.go)
+                        .onSubmit(openPreview)
                     Button("Paste", systemImage: "doc.on.clipboard") {
                         urlText = UIPasteboard.general.string ?? urlText
                     }
@@ -165,33 +133,13 @@ struct DownloadsView: View {
                 .padding(.vertical, 14)
                 .glassEffect(.regular.interactive(), in: .capsule)
 
-                Picker("Type", selection: $mode) {
-                    ForEach(DownloadMode.allCases) { Text($0.title).tag($0) }
+                Button {
+                    openPreview()
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity)
                 }
-                .pickerStyle(.segmented)
-
-                optionsRow
-
-                HStack(spacing: 12) {
-                    Button {
-                        manager.start(url: trimmed, mode: mode,
-                                      quality: VideoQuality(rawValue: qualityRaw) ?? .best,
-                                      audio: AudioFormat(rawValue: audioRaw) ?? .m4a)
-                        urlText = ""
-                    } label: {
-                        Label("Download", systemImage: "arrow.down")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glassProminent)
-
-                    Button {
-                        showFormats = true
-                    } label: {
-                        Label("Formats", systemImage: "slider.horizontal.3")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glass)
-                }
+                .buttonStyle(.glassProminent)
                 .controlSize(.large)
                 .disabled(trimmed.isEmpty)
             }
@@ -271,75 +219,65 @@ struct DownloadRow: View {
     }
 }
 
-// MARK: - Format picker
+// MARK: - Preview + choose what to download
 
-struct FormatPickerView: View {
+struct Choice: Identifiable {
+    let id: String          // yt-dlp format id
+    let title: String
+    let subtitle: String
+    let size: Int?
+}
+
+extension FormatInfo {
+    var audioRate: Double { abr ?? tbr ?? 0 }
+
+    var heightLabel: String {
+        guard let h = height else { return resolution ?? "Video" }
+        if let fps, fps > 30 { return "\(h)p\(Int(fps.rounded()))" }
+        return "\(h)p"
+    }
+
+    var codecName: String? {
+        let c = ((hasVideo ? vcodec : acodec) ?? "").lowercased()
+        if c.hasPrefix("avc1") || c.hasPrefix("h264") { return "H.264" }
+        if c.hasPrefix("vp09") || c.hasPrefix("vp9") { return "VP9" }
+        if c.hasPrefix("av01") { return "AV1" }
+        if c.hasPrefix("hev1") || c.hasPrefix("hvc1") { return "HEVC" }
+        if c.hasPrefix("mp4a") { return "AAC" }
+        if c.hasPrefix("opus") { return "Opus" }
+        return c.isEmpty ? nil : c
+    }
+}
+
+struct PreviewSheet: View {
     let url: String
-    let mode: DownloadMode
+    var onStarted: () -> Void = {}
     @Environment(DownloadManager.self) private var manager
     @Environment(\.dismiss) private var dismiss
     @State private var info: MediaInfo?
     @State private var error: String?
-    @State private var showAll = false
+    @State private var mode: DownloadMode = .video
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 if let info {
-                    GlassEffectContainer(spacing: 12) {
-                        VStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(info.title).font(.headline)
-                                if let u = info.uploader {
-                                    Text(u).font(.subheadline).foregroundStyle(.secondary)
-                                }
-                            }
-                            .glassCard()
-
-                            if info.isPlaylist {
-                                Text("Playlist with \(info.count ?? 0) items. Use Download to grab all of it.")
-                                    .glassCard()
-                            } else {
-                                Toggle("Show all formats (video-only has no sound)", isOn: $showAll)
-                                    .padding(.horizontal, 4)
-                                if let warnings = info.warnings, !warnings.isEmpty {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("yt-dlp said").font(.footnote.bold())
-                                        ForEach(warnings, id: \.self) {
-                                            Text($0).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .glassCard(cornerRadius: 20)
-                                }
-                                if usable(info).isEmpty {
-                                    Text(showAll
-                                         ? "yt-dlp found no formats for this link."
-                                         : "Nothing this app can save directly. Turn on “Show all formats” to see everything yt-dlp found.")
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                        .glassCard(cornerRadius: 20)
-                                }
-                                ForEach(usable(info)) { f in
-                                    Button {
-                                        manager.start(url: url, mode: mode, formatID: f.id, title: info.title)
-                                        dismiss()
-                                    } label: {
-                                        FormatRow(format: f).glassCard(cornerRadius: 20, interactive: true)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                        .padding()
-                    }
+                    content(info).padding()
                 } else if let error {
-                    ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle",
-                                           description: Text(error))
-                        .padding(.top, 60)
+                    ContentUnavailableView {
+                        Label("Couldn't load", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(error)
+                    } actions: {
+                        Button("Try again") { Task { await load() } }
+                    }
+                    .padding(.top, 60)
                 } else {
-                    ProgressView("Fetching formats…").padding(.top, 80)
+                    ProgressView("Fetching info…").padding(.top, 100)
                 }
             }
-            .navigationTitle("Formats")
+            .background(AppBackground())
+            .navigationTitle("Download")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 Button("Close", systemImage: "xmark") { dismiss() }
@@ -348,40 +286,204 @@ struct FormatPickerView: View {
         }
     }
 
-    private func usable(_ info: MediaInfo) -> [FormatInfo] {
-        let list: [FormatInfo]
-        if showAll {
-            list = info.formats
-        } else if mode == .audio {
-            list = info.formats.filter { $0.hasAudio && !$0.hasVideo }
-        } else {
-            // ready-made video+audio files, plus H.264 video that we merge with audio ourselves
-            list = info.formats.filter { ($0.hasAudio && $0.hasVideo) || $0.isMuxableVideo }
-        }
-        return list.sorted { ($0.height ?? 0, $0.tbr ?? 0) > ($1.height ?? 0, $1.tbr ?? 0) }
-    }
-
     private func load() async {
+        error = nil
+        info = nil
         do { info = try await manager.fetchInfo(url: url) }
         catch { self.error = error.localizedDescription }
     }
-}
 
-struct FormatRow: View {
-    let format: FormatInfo
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(format.resolution ?? "audio only").font(.body)
-                Text([format.ext, format.note, format.isMuxableVideo ? "+ best audio, merged" : nil].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let size = format.filesize {
-                Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
-                    .font(.caption).foregroundStyle(.secondary)
+    // MARK: content
+
+    @ViewBuilder private func content(_ info: MediaInfo) -> some View {
+        GlassEffectContainer(spacing: 14) {
+            VStack(spacing: 14) {
+                header(info)
+
+                if info.isPlaylist {
+                    playlistCard(info)
+                } else {
+                    Picker("Type", selection: $mode) {
+                        ForEach(DownloadMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+
+                    let result = choices(info)
+                    if result.ok.isEmpty { nothingCard(info) }
+                    ForEach(result.ok) { choiceRow($0, info: info) }
+                    if !result.blocked.isEmpty { blockedSection(result.blocked) }
+                }
             }
         }
+    }
+
+    private func header(_ info: MediaInfo) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let t = info.thumbnail, let u = URL(string: t) {
+                Color.clear
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay {
+                        AsyncImage(url: u) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else if phase.error != nil {
+                                Rectangle().fill(.quaternary).overlay { Image(systemName: "photo") }
+                            } else {
+                                Rectangle().fill(.quaternary).overlay { ProgressView() }
+                            }
+                        }
+                    }
+                    .clipShape(.rect(cornerRadius: 16))
+                    .overlay(alignment: .bottomTrailing) {
+                        if let d = info.duration {
+                            Text(Self.time(d))
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(.black.opacity(0.6), in: .capsule)
+                                .padding(8)
+                        }
+                    }
+            }
+            Text(info.title).font(.headline)
+            if let u = info.uploader {
+                Text(u).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .glassCard()
+    }
+
+    private func playlistCard(_ info: MediaInfo) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Playlist · \(info.count ?? 0) items").font(.headline)
+            Text("Pick one setting for every item. Choosing formats per item isn't supported yet.")
+                .font(.footnote).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button {
+                    manager.start(url: url, mode: .video, title: info.title)
+                    finish()
+                } label: {
+                    Label("All as video", systemImage: "film").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                Button {
+                    manager.start(url: url, mode: .audio, title: info.title)
+                    finish()
+                } label: {
+                    Label("All as audio", systemImage: "music.note").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glass)
+            }
+            .controlSize(.large)
+        }
+        .glassCard()
+    }
+
+    private func nothingCard(_ info: MediaInfo) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Nothing this app can save here").font(.headline)
+            Text("Everything yt-dlp found needs ffmpeg or isn't a direct download. See the list below.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if let w = info.warnings, !w.isEmpty {
+                ForEach(w, id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary) }
+            }
+        }
+        .glassCard(cornerRadius: 20)
+    }
+
+    private func choiceRow(_ c: Choice, info: MediaInfo) -> some View {
+        Button {
+            manager.start(url: url, mode: mode, formatID: c.id, title: info.title, noPlaylist: true)
+            finish()
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(c.title).font(.headline)
+                    if !c.subtitle.isEmpty {
+                        Text(c.subtitle).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if let size = c.size {
+                    Text("≈ " + ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Image(systemName: "arrow.down.circle.fill").font(.title2)
+            }
+            .glassCard(cornerRadius: 20, interactive: true)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func blockedSection(_ items: [Choice]) -> some View {
+        DisclosureGroup("Also available, but needs ffmpeg (\(items.count))") {
+            VStack(spacing: 10) {
+                ForEach(items) { c in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.title)
+                            if !c.subtitle.isEmpty {
+                                Text(c.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                    }
+                    .opacity(0.6)
+                }
+            }
+            .padding(.top, 8)
+        }
+        .glassCard(cornerRadius: 20)
+    }
+
+    // MARK: building the list
+
+    private func choices(_ info: MediaInfo) -> (ok: [Choice], blocked: [Choice]) {
+        let aac = info.formats.filter { $0.isAAC }.max { $0.audioRate < $1.audioRate }
+        var ok: [Choice] = []
+        var blocked: [Choice] = []
+
+        switch mode {
+        case .video:
+            let videos = info.formats.filter { $0.hasVideo }.sorted {
+                ($0.height ?? 0, $0.fps ?? 0, $0.tbr ?? 0) > ($1.height ?? 0, $1.fps ?? 0, $1.tbr ?? 0)
+            }
+            for f in videos {
+                let merged = !f.hasAudio
+                let saveable = f.isHTTP && (!merged || (f.isMuxableVideo && aac != nil))
+                var size = f.filesize
+                if merged, let s = size { size = s + (aac?.filesize ?? 0) }
+                let subtitle = [f.ext?.uppercased(), f.codecName, merged ? "merged with audio" : nil]
+                    .compactMap { $0 }.joined(separator: " · ")
+                let choice = Choice(id: f.id, title: f.heightLabel, subtitle: subtitle, size: size)
+                if saveable { ok.append(choice) } else { blocked.append(choice) }
+            }
+        case .audio:
+            let audios = info.formats.filter { $0.hasAudio && !$0.hasVideo }.sorted {
+                ($0.isAAC ? 1 : 0, $0.audioRate) > ($1.isAAC ? 1 : 0, $1.audioRate)
+            }
+            for f in audios {
+                var title = f.ext?.uppercased() ?? "Audio"
+                if f.audioRate > 0 { title += " · \(Int(f.audioRate)) kbps" }
+                let subtitle = [f.codecName, f.note].compactMap { $0 }.joined(separator: " · ")
+                let choice = Choice(id: f.id, title: title, subtitle: subtitle, size: f.filesize)
+                if f.isHTTP { ok.append(choice) } else { blocked.append(choice) }
+            }
+            blocked.append(Choice(id: "mp3", title: "MP3", subtitle: "Converting to MP3 needs ffmpeg", size: nil))
+        }
+        return (ok, blocked)
+    }
+
+    private func finish() {
+        onStarted()
+        dismiss()
+    }
+
+    private static func time(_ seconds: Double) -> String {
+        let t = Int(seconds)
+        let h = t / 3600, m = (t % 3600) / 60, s = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 }
 

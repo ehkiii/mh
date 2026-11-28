@@ -125,9 +125,12 @@ def extract_info(a):
             "height": f.get("height"),
             "vcodec": f.get("vcodec"),
             "acodec": f.get("acodec"),
-            "filesize": f.get("filesize") or f.get("filesize_approx"),
+            "fps": f.get("fps"),
+            "filesize": int(f.get("filesize") or f.get("filesize_approx") or 0) or None,
             "tbr": f.get("tbr"),
+            "abr": f.get("abr"),
             "note": f.get("format_note"),
+            "protocol": f.get("protocol"),
         })
     entries = info.get("entries")
     return {
@@ -336,7 +339,7 @@ def start_download(a):
         # Looks at the real format list first, then picks (see _make_selector)
         "format": _make_selector(a, stats),
         "outtmpl": os.path.join(out, "%(title).150B [%(id)s].%(ext)s"),
-        "noplaylist": False,
+        "noplaylist": bool(a.get("noplaylist", False)),
         "concurrent_fragment_downloads": 4,
         "restrictfilenames": False,
         "windowsfilenames": True,
