@@ -88,6 +88,7 @@ struct MediaInfo: Decodable {
 @Observable @MainActor
 final class DownloadManager {
     var items: [DownloadItem] = []
+    let library = Library()
     var version = "loading…"
     var bootError: String?
     var updateStatus = ""
@@ -97,6 +98,7 @@ final class DownloadManager {
     // MARK: boot / info
 
     func boot() async {
+        library.refresh()
         do {
             let data = try await Py.call("version")
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -145,6 +147,13 @@ final class DownloadManager {
         Task { _ = try? await Py.call("cancel", ["id": id]) }
     }
 
+    /// A download is complete: it leaves the queue and appears in the Downloaded tab.
+    private func finish(id: String, count: Int) {
+        items.removeAll { $0.id == id }
+        library.refresh()
+        library.unseen += count
+    }
+
     private func update(_ id: String, _ change: (inout DownloadItem) -> Void) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         change(&items[i])
@@ -178,6 +187,11 @@ final class DownloadManager {
             Task { await merge(id: id, files: files) }
             return
         }
+        if type == "done" {
+            let files = event["files"] as? [String] ?? []
+            finish(id: id, count: max(files.count, 1))
+            return
+        }
         update(id) { item in
             switch type {
             case "progress":
@@ -205,10 +219,6 @@ final class DownloadManager {
                 }
                 if let s = event["speed"] as? Double { item.speed = s }
                 item.eta = event["eta"] as? Int
-            case "done":
-                item.state = .finished
-                item.progress = 1
-                item.files = event["files"] as? [String] ?? []
             case "error":
                 item.state = .failed
                 item.message = event["text"] as? String
@@ -232,12 +242,16 @@ final class DownloadManager {
         let base = video.deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: #"\.f[0-9A-Za-z_-]+$"#, with: "", options: .regularExpression)
         let output = video.deletingLastPathComponent().appendingPathComponent(base + ".mp4")
+        library.inFlight.insert(output.lastPathComponent)   // hide the half-written file
         do {
             try await Muxer.merge(video: video, audio: audio, output: output)
             try? FileManager.default.removeItem(at: video)
             try? FileManager.default.removeItem(at: audio)
-            update(id) { $0.state = .finished; $0.files = [output.path] }
+            library.inFlight.remove(output.lastPathComponent)
+            finish(id: id, count: 1)
         } catch {
+            library.inFlight.remove(output.lastPathComponent)
+            try? FileManager.default.removeItem(at: output)   // drop the partial result
             update(id) {
                 $0.state = .failed
                 $0.message = "Merge failed: \(error.localizedDescription). The separate video and audio files are still in Downloads."

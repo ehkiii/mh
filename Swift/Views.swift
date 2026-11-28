@@ -57,17 +57,32 @@ struct GlassProgressBar: View {
 // MARK: - Root
 
 struct RootView: View {
+    enum AppTab: Hashable { case downloads, downloaded, settings }
+
+    @Environment(DownloadManager.self) private var manager
+    @State private var tab: AppTab = .downloads
+
     var body: some View {
-        TabView {
-            Tab("Downloads", systemImage: "arrow.down.circle") {
+        TabView(selection: $tab) {
+            Tab("Downloads", systemImage: "arrow.down.circle", value: AppTab.downloads) {
                 NavigationStack { DownloadsView() }
             }
-            Tab("Settings", systemImage: "gearshape") {
+            Tab("Downloaded", systemImage: "checkmark.circle", value: AppTab.downloaded) {
+                NavigationStack { DownloadedView() }
+            }
+            .badge(manager.library.unseen)
+            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 NavigationStack { SettingsView() }
             }
         }
         .tabViewStyle(.sidebarAdaptable)        // floating glass sidebar on iPad, tab bar on iPhone
         .tabBarMinimizeBehavior(.onScrollDown)
+        .onChange(of: tab) { _, new in
+            if new == .downloaded { manager.library.unseen = 0 }
+        }
+        .onChange(of: manager.library.unseen) { _, count in
+            if tab == .downloaded && count > 0 { manager.library.unseen = 0 }
+        }
     }
 }
 
@@ -92,7 +107,7 @@ struct DownloadsView: View {
                         if manager.items.isEmpty {
                             VStack(spacing: 8) {
                                 Image(systemName: "tray").font(.largeTitle)
-                                Text("No downloads yet").font(.headline)
+                                Text("No active downloads").font(.headline)
                                 Text("Paste a link above to get started.")
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
@@ -109,7 +124,7 @@ struct DownloadsView: View {
         .navigationTitle("Downloads")
         .onChange(of: urlText) { _, _ in invalidLink = false }
         .toolbar {
-            Button("Clear finished", systemImage: "trash") {
+            Button("Clear failed", systemImage: "trash") {
                 manager.items.removeAll { !$0.isActive }
             }
             .disabled(!manager.items.contains { !$0.isActive })
