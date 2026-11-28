@@ -232,6 +232,7 @@ struct FormatPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var info: MediaInfo?
     @State private var error: String?
+    @State private var showAll = false
 
     var body: some View {
         NavigationStack {
@@ -251,10 +252,24 @@ struct FormatPickerView: View {
                                 Text("Playlist with \(info.count ?? 0) items. Use Download to grab all of it.")
                                     .glassCard()
                             } else {
-                                Text("Single-file formats only (no merging yet)")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Toggle("Show all formats (video-only has no sound)", isOn: $showAll)
                                     .padding(.horizontal, 4)
+                                if let warnings = info.warnings, !warnings.isEmpty {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("yt-dlp said").font(.footnote.bold())
+                                        ForEach(warnings, id: \.self) {
+                                            Text($0).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .glassCard(cornerRadius: 20)
+                                }
+                                if usable(info).isEmpty {
+                                    Text(showAll
+                                         ? "yt-dlp found no formats for this link."
+                                         : "No single-file formats. Turn on “Show all formats” to see everything yt-dlp found.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                        .glassCard(cornerRadius: 20)
+                                }
                                 ForEach(usable(info)) { f in
                                     Button {
                                         manager.start(url: url, mode: mode, formatID: f.id, title: info.title)
@@ -286,9 +301,9 @@ struct FormatPickerView: View {
     }
 
     private func usable(_ info: MediaInfo) -> [FormatInfo] {
-        let list = mode == .audio
+        let list = showAll ? info.formats : (mode == .audio
             ? info.formats.filter { $0.hasAudio && !$0.hasVideo }
-            : info.formats.filter { $0.hasAudio && $0.hasVideo }
+            : info.formats.filter { $0.hasAudio && $0.hasVideo })
         return list.sorted { ($0.height ?? 0, $0.tbr ?? 0) > ($1.height ?? 0, $1.tbr ?? 0) }
     }
 

@@ -93,12 +93,21 @@ def _cookiefile():
 @_guard
 def extract_info(a):
     import yt_dlp
+    warns = []
+
+    class Log:
+        def debug(self, m): pass
+        def info(self, m): pass
+        def warning(self, m): warns.append(m)
+        def error(self, m): warns.append(m)
+
     opts = {
-        "quiet": True,
-        "no_warnings": True,
         "skip_download": True,
         "noplaylist": a.get("noplaylist", True),
         "extract_flat": "in_playlist",
+        "logger": Log(),
+        # return what was found (even nothing) so the app can explain why
+        "ignore_no_formats_error": True,
     }
     if _cookiefile():
         opts["cookiefile"] = _cookiefile()
@@ -129,6 +138,7 @@ def extract_info(a):
         "is_playlist": entries is not None,
         "count": len(list(entries)) if entries is not None else None,
         "formats": formats,
+        "warnings": [w[:300] for w in warns[-5:]],
     }
 
 
@@ -144,10 +154,56 @@ def _custom_overrides(arg_string):
     return {k: v for k, v in given.items() if base.get(k) != v}
 
 
-def _download_worker(job, opts):
+def _has(codec):
+    return codec not in (None, "none")
+
+
+def _make_selector(mode, stats):
+    """Format selector that inspects the real format list first (like -F), then picks.
+
+    Without ffmpeg we can't merge, so we only pick a single-file format:
+    best video+audio for "video", best audio-only for "audio".
+    """
+    def selector(ctx):
+        fmts = [f for f in ctx["formats"]
+                if f.get("ext") != "mhtml" and f.get("format_note") != "storyboard"]
+        combined = [f for f in fmts if _has(f.get("vcodec")) and _has(f.get("acodec"))]
+        video_only = [f for f in fmts if _has(f.get("vcodec")) and not _has(f.get("acodec"))]
+        audio_only = [f for f in fmts if _has(f.get("acodec")) and not _has(f.get("vcodec"))]
+        stats.update(total=len(fmts), combined=len(combined),
+                     video_only=len(video_only), audio_only=len(audio_only))
+        if mode == "audio":
+            pool = audio_only
+            def key(f): return (f.get("ext") == "m4a", f.get("abr") or f.get("tbr") or 0)
+        else:
+            pool = combined
+            def key(f): return (f.get("height") or 0, f.get("ext") == "mp4", f.get("tbr") or 0)
+        if pool:
+            yield max(pool, key=key)
+    return selector
+
+
+def _no_format_message(stats, warns):
+    total = stats.get("total", 0)
+    msg = (f"No downloadable single-file format. yt-dlp found {total} formats "
+           f"({stats.get('combined', 0)} video+audio, {stats.get('video_only', 0)} video-only, "
+           f"{stats.get('audio_only', 0)} audio-only). ")
+    if total == 0:
+        msg += ("Zero formats usually means the site's JavaScript challenge wasn't solved "
+                "(YouTube needs a JS runtime). ")
+    else:
+        msg += "Separate video and audio streams need ffmpeg to merge. "
+    msg += "Tap Formats to see what exists."
+    if warns:
+        msg += " yt-dlp said: " + " | ".join(w[:160] for w in warns[-3:])
+    return msg
+
+
+def _download_worker(job, opts, stats):
     import yt_dlp
     jid = job["id"]
     files = []
+    warns = []
 
     def emit(**kw):
         _events.put({"id": jid, **kw})
@@ -166,8 +222,12 @@ def _download_worker(job, opts):
     class Log:
         def debug(self, m): pass
         def info(self, m): pass
-        def warning(self, m): emit(type="log", text=m)
-        def error(self, m): emit(type="log", text=m)
+        def warning(self, m):
+            warns.append(m)
+            emit(type="log", text=m)
+        def error(self, m):
+            warns.append(m)
+            emit(type="log", text=m)
 
     opts = dict(opts, progress_hooks=[hook], logger=Log(), noprogress=True)
     try:
@@ -179,16 +239,22 @@ def _download_worker(job, opts):
             emit(type="cancelled")
         else:
             traceback.print_exc()
-            emit(type="error", text=f"{type(e).__name__}: {e}")
+            text = f"{type(e).__name__}: {e}"
+            if "Requested format is not available" in str(e) or "No video formats found" in str(e):
+                text = _no_format_message(stats, warns)
+            elif warns:
+                text += " | " + " | ".join(w[:160] for w in warns[-2:])
+            emit(type="error", text=text)
 
 
 @_guard
 def start_download(a):
     out = _cfg["downloads"]
+    stats = {}
     fmt = a.get("format_id")
     if not fmt:
-        # No ffmpeg yet -> only single-file formats (no merging).
-        fmt = "ba[ext=m4a]/ba/b" if a.get("mode") == "audio" else "b[ext=mp4]/b"
+        # Look at the real format list first, then pick (single-file only: no ffmpeg yet).
+        fmt = _make_selector(a.get("mode"), stats)
     opts = {
         "format": fmt,
         "outtmpl": os.path.join(out, "%(title).150B [%(id)s].%(ext)s"),
@@ -201,7 +267,7 @@ def start_download(a):
         opts["cookiefile"] = _cookiefile()
     if a.get("custom_args", "").strip():
         opts.update(_custom_overrides(a["custom_args"]))
-    threading.Thread(target=_download_worker, args=(a, opts), daemon=True).start()
+    threading.Thread(target=_download_worker, args=(a, opts, stats), daemon=True).start()
     return {"started": True}
 
 

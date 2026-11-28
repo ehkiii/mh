@@ -23,13 +23,12 @@ status=${PIPESTATUS[0]}
 set -e
 
 if [ "$status" -ne 0 ]; then
-  # xcbeautify hides build-script output, so print the raw log where the failure happened.
-  echo "::group::RAW xcodebuild log (last 250 lines)"
-  tail -n 250 build.log
-  echo "::endgroup::"
-  echo "::group::Output of the 'Process Python libraries' script"
-  grep -n -A80 "Process Python libraries" build.log | head -n 200 || true
-  echo "::endgroup::"
+  # xcbeautify hides build-script output, so print the raw log (not collapsed).
+  echo "=================== SCRIPT PHASE OUTPUT (from PhaseScriptExecution) ==================="
+  grep -n -A150 "PhaseScriptExecution" build.log | head -n 220 || true
+  echo "=================== RAW xcodebuild log, last 120 lines ==================="
+  tail -n 120 build.log
+  echo "=================== end of raw log ==================="
   exit "$status"
 fi
 

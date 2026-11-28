@@ -45,9 +45,10 @@ struct MediaInfo: Decodable {
     let isPlaylist: Bool
     let count: Int?
     let formats: [FormatInfo]
+    let warnings: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case title, uploader, thumbnail, duration, count, formats
+        case title, uploader, thumbnail, duration, count, formats, warnings
         case isPlaylist = "is_playlist"
     }
 }
