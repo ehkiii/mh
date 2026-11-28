@@ -271,6 +271,7 @@ def _download_worker(job, opts, stats):
     jid = job["id"]
     files = []
     warns = []
+    errors = []
 
     def emit(**kw):
         _events.put({"id": jid, **kw})
@@ -278,7 +279,7 @@ def _download_worker(job, opts, stats):
     def hook(d):
         if jid in _cancelled:
             raise yt_dlp.utils.DownloadCancelled("cancelled")
-        if d["status"] == "finished":
+        if d["status"] == "finished" and d["filename"] not in files:
             files.append(d["filename"])
         info = d.get("info_dict") or {}
         emit(type="progress", status=d["status"], title=info.get("title"),
@@ -293,13 +294,26 @@ def _download_worker(job, opts, stats):
             warns.append(m)
             emit(type="log", text=m)
         def error(self, m):
+            errors.append(m)
             warns.append(m)
             emit(type="log", text=m)
 
-    opts = dict(opts, progress_hooks=[hook], logger=Log(), noprogress=True)
+    # "only_download" is the yt-dlp CLI default. Without it, asking for two formats to be merged
+    # aborts with "ffmpeg is not installed"; with it yt-dlp just downloads both files separately
+    # and the app merges them on the device. Errors then come back as a return code + logger.error,
+    # so they are turned back into exceptions below.
+    opts = dict(opts, progress_hooks=[hook], logger=Log(), noprogress=True,
+                ignoreerrors="only_download")
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([job["url"]])
+            ret = ydl.download([job["url"]])
+        if jid in _cancelled:
+            raise RuntimeError("cancelled")
+        if ret and not files:
+            raise RuntimeError(" | ".join(errors[-2:]) or "yt-dlp reported an error")
+        if stats.get("merge") and len(files) < 2:
+            raise RuntimeError("Only one of the two streams (video, audio) was downloaded. "
+                               + " | ".join(errors[-2:]))
         emit(type="done", files=files, merge=bool(stats.get("merge")))
     except Exception as e:  # noqa: BLE001
         if jid in _cancelled:
@@ -309,7 +323,7 @@ def _download_worker(job, opts, stats):
             text = f"{type(e).__name__}: {e}"
             if "Requested format is not available" in str(e) or "No video formats found" in str(e):
                 text = _no_format_message(stats, warns)
-            elif warns:
+            elif warns and not errors:
                 text += " | " + " | ".join(w[:160] for w in warns[-2:])
             emit(type="error", text=text)
 
