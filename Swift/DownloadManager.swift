@@ -26,8 +26,13 @@ struct DownloadItem: Identifiable {
     var title: String
     var state: State = .starting
     var progress: Double = 0
+    var downloadedBytes: Int64 = 0
+    var totalBytes: Int64?          // nil = size unknown (shows an indeterminate bar)
     var speed: Double?
     var eta: Int?
+    var part: String?               // "video" / "audio" while downloading a merged pair
+    var itemIndex: Int?             // playlist position
+    var itemCount: Int?
     var files: [String] = []
     var message: String?
 
@@ -156,7 +161,7 @@ final class DownloadManager {
                    let events = obj["events"] as? [[String: Any]] {
                     events.forEach(apply)
                 }
-                try? await Task.sleep(for: .milliseconds(300))
+                try? await Task.sleep(for: .milliseconds(200))
             }
             polling = false
             UIApplication.shared.isIdleTimerDisabled = false
@@ -178,10 +183,27 @@ final class DownloadManager {
             case "progress":
                 item.state = .downloading
                 if let t = event["title"] as? String { item.title = t }
-                if let done = event["downloaded"] as? Double, let total = event["total"] as? Double, total > 0 {
-                    item.progress = min(done / total, 1)
+
+                // next item of a playlist: start the bar over
+                let index = event["item"] as? Int
+                if index != item.itemIndex {
+                    item.progress = 0
+                    item.speed = nil
+                    item.eta = nil
                 }
-                item.speed = event["speed"] as? Double
+                item.itemIndex = index
+                item.itemCount = event["items"] as? Int
+                item.part = event["part"] as? String
+
+                if let done = event["downloaded"] as? Double { item.downloadedBytes = Int64(done) }
+                if let total = event["total"] as? Double, total > 0 {
+                    item.totalBytes = Int64(total)
+                    // never move backwards
+                    item.progress = max(item.progress, min(Double(item.downloadedBytes) / total, 1))
+                } else {
+                    item.totalBytes = nil
+                }
+                if let s = event["speed"] as? Double { item.speed = s }
                 item.eta = event["eta"] as? Int
             case "done":
                 item.state = .finished

@@ -43,6 +43,29 @@ extension View {
     }
 }
 
+/// Thin glass-style progress bar that glides between updates.
+struct GlassProgressBar: View {
+    let value: Double   // 0...1
+
+    var body: some View {
+        Capsule()
+            .fill(.primary.opacity(0.12))
+            .frame(height: 8)
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: geo.size.width * CGFloat(min(max(value, 0), 1)))
+                }
+            }
+            .clipShape(Capsule())
+            .animation(.linear(duration: 0.25), value: value)
+            .accessibilityElement()
+            .accessibilityLabel("Progress")
+            .accessibilityValue("\(Int(value * 100)) percent")
+    }
+}
+
 // MARK: - Root
 
 struct RootView: View {
@@ -186,8 +209,15 @@ struct DownloadRow: View {
             case .starting:
                 ProgressView().controlSize(.small)
             case .downloading:
-                ProgressView(value: item.progress).tint(.white)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                if item.totalBytes != nil {
+                    GlassProgressBar(value: item.progress)
+                } else {
+                    ProgressView().progressViewStyle(.linear)   // size unknown
+                }
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             case .merging:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -225,12 +255,30 @@ struct DownloadRow: View {
     }
 
     private var detail: String {
-        var parts = ["\(Int(item.progress * 100))%"]
-        if let s = item.speed {
-            parts.append(ByteCountFormatter.string(fromByteCount: Int64(s), countStyle: .file) + "/s")
+        var parts: [String] = []
+        if let i = item.itemIndex, let n = item.itemCount {
+            parts.append("Item \(i)/\(n)")
+        } else if let p = item.part {
+            parts.append(p == "video" ? "Video" : "Audio")
         }
-        if let e = item.eta { parts.append("\(e)s left") }
+        if let total = item.totalBytes {
+            parts.append("\(Int(item.progress * 100))%")
+            parts.append("\(Self.bytes(item.downloadedBytes)) of \(Self.bytes(total))")
+        } else {
+            parts.append(Self.bytes(item.downloadedBytes))
+        }
+        if let s = item.speed { parts.append(Self.bytes(Int64(s)) + "/s") }
+        if let e = item.eta { parts.append(Self.clock(e) + " left") }
         return parts.joined(separator: " · ")
+    }
+
+    private static func bytes(_ n: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+    }
+
+    private static func clock(_ seconds: Int) -> String {
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 }
 
@@ -507,11 +555,23 @@ struct PreviewSheet: View {
 struct SettingsView: View {
     @Environment(DownloadManager.self) private var manager
     @AppStorage("customArgs") private var customArgs = ""
+    @AppStorage("appearance") private var appearance = AppearanceMode.system.rawValue
 
     var body: some View {
         ScrollView {
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Appearance").font(.headline)
+                        Picker("Appearance", selection: $appearance) {
+                            ForEach(AppearanceMode.allCases) { Text($0.title).tag($0.rawValue) }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Default follows your device's light or dark setting.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .glassCard()
+
                     VStack(alignment: .leading, spacing: 12) {
                         Text("yt-dlp").font(.headline)
                         LabeledContent("Version", value: manager.version)

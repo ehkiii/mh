@@ -14,6 +14,7 @@ import shlex
 import sys
 import tempfile
 import threading
+import time
 import traceback
 import urllib.request
 import zipfile
@@ -199,6 +200,54 @@ def _abr(f):
     return f.get("abr") or f.get("tbr") or 0
 
 
+def _size(f):
+    return f.get("filesize") or f.get("filesize_approx") or None
+
+
+class _Progress:
+    """Overall byte counter for one download (all of its parts) with smoothed speed and ETA.
+
+    A merged video+audio download is two files. yt-dlp reports each file on its own, so its
+    own percent/speed/eta restart for the second file. This adds the parts together, uses the
+    sizes announced by the format list (so the total is known from the start), and smooths
+    the speed so the ETA doesn't jump around.
+    """
+
+    def __init__(self, parts):
+        self.expect = dict(parts or {})   # format_id -> expected bytes (or None)
+        self.sizes = {}                   # part key -> best known size
+        self.done = {}                    # part key -> bytes downloaded so far
+        self.speed = None                 # smoothed bytes/s
+        self._t = None
+        self._b = 0
+
+    def feed(self, key, fid, downloaded, exact_total, est_total):
+        key = fid or key          # a part is identified by its format id when we have one
+        size = exact_total or self.expect.get(fid) or est_total
+        if size:
+            self.sizes[key] = size
+        self.done[key] = downloaded or 0
+        got = sum(self.done.values())
+
+        now = time.monotonic()
+        if self._t is None:
+            self._t, self._b = now, got
+        elif now - self._t >= 0.5:
+            inst = max(got - self._b, 0) / (now - self._t)
+            self.speed = inst if self.speed is None else 0.3 * inst + 0.7 * self.speed
+            self._t, self._b = now, got
+
+        # Overall total: real size of parts already seen, announced size of the rest.
+        known = dict(self.expect)
+        known.update(self.sizes)
+        total = max(sum(known.values()), got) if known and all(known.values()) else None
+
+        eta = None
+        if total and self.speed and self.speed > 1:
+            eta = int((total - got) / self.speed)
+        return got, total, self.speed, eta
+
+
 def _make_selector(a, stats):
     """Format selector that inspects the real format list first (like -F), then picks.
 
@@ -228,6 +277,7 @@ def _make_selector(a, stats):
 
         def pair(v, au):
             stats["merge"] = True
+            stats["parts"] = {v["format_id"]: _size(v), au["format_id"]: _size(au)}
             return {
                 "format_id": f'{v["format_id"]}+{au["format_id"]}',
                 "ext": "mp4",
@@ -243,13 +293,16 @@ def _make_selector(a, stats):
             if _muxable_video(f) and best_aac:
                 yield pair(f, best_aac)
             else:
+                stats["parts"] = {f["format_id"]: _size(f)}
                 yield f
             return
 
         if mode == "audio":
             pool = (aac_pool or audio_only) if audio_pref == "m4a" else audio_only
             if pool:
-                yield max(pool, key=_abr)
+                best = max(pool, key=_abr)
+                stats["parts"] = {best["format_id"]: _size(best)}
+                yield best
             return
 
         # Video: best of {combined files, muxable video-only (needs AAC audio)}
@@ -263,7 +316,11 @@ def _make_selector(a, stats):
             best = max(within, key=lambda f: (f.get("height") or 0, _has(f.get("acodec")), f.get("tbr") or 0))
         else:  # everything is above the requested height: take the smallest
             best = min(pool_all, key=lambda f: f.get("height") or 0)
-        yield best if _has(best.get("acodec")) else pair(best, best_aac)
+        if _has(best.get("acodec")):
+            stats["parts"] = {best["format_id"]: _size(best)}
+            yield best
+        else:
+            yield pair(best, best_aac)
 
     return selector
 
@@ -296,16 +353,37 @@ def _download_worker(job, opts, stats):
     def emit(**kw):
         _events.put({"id": jid, **kw})
 
+    tracker = {"scope": None, "p": None}   # one _Progress per playlist item
+    last_emit = [0.0]
+
     def hook(d):
         if jid in _cancelled:
             raise yt_dlp.utils.DownloadCancelled("cancelled")
         if d["status"] == "finished" and d["filename"] not in files:
             files.append(d["filename"])
         info = d.get("info_dict") or {}
+
+        scope = info.get("playlist_index")
+        if tracker["p"] is None or scope != tracker["scope"]:
+            tracker["scope"] = scope
+            tracker["p"] = _Progress(stats.get("parts"))
+        fid = info.get("format_id")
+        got, total, speed, eta = tracker["p"].feed(
+            fid or d.get("filename") or "?", fid,
+            d.get("downloaded_bytes"), d.get("total_bytes"), d.get("total_bytes_estimate"))
+
+        # yt-dlp reports on every chunk; the UI only needs ~5 updates a second
+        now = time.monotonic()
+        if d["status"] != "finished" and now - last_emit[0] < 0.2:
+            return
+        last_emit[0] = now
+
+        vcodec, acodec = info.get("vcodec"), info.get("acodec")
+        part = ("audio" if _has(acodec) and not _has(vcodec)
+                else "video" if _has(vcodec) and not _has(acodec) else None)
         emit(type="progress", status=d["status"], title=info.get("title"),
-             downloaded=d.get("downloaded_bytes"),
-             total=d.get("total_bytes") or d.get("total_bytes_estimate"),
-             speed=d.get("speed"), eta=d.get("eta"))
+             downloaded=got, total=total, speed=speed, eta=eta, part=part,
+             item=scope, items=info.get("n_entries"))
 
     class Log:
         def debug(self, m): pass
