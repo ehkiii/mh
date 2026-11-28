@@ -72,9 +72,23 @@ targets:
           export EXPANDED_CODE_SIGN_IDENTITY="-"
           export CODE_SIGNING_REQUIRED="YES"
           # Debug aid: shows the xcframework layout in the CI log
-          ls -la "$PROJECT_DIR/Python.xcframework"
           find "$PROJECT_DIR/Python.xcframework" -maxdepth 4 -not -path '*/.*'
-          source "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
-          # Same call as the CPython docs. app_packages is pure Python, so it is
-          # copied as a plain resource folder and needs no processing.
-          install_python Python.xcframework app
+          # The helper script is utils.sh in newer Pythons, build_utils.sh in older ones.
+          UTILS=""
+          for f in "$PROJECT_DIR/Python.xcframework/build/utils.sh" "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"; do
+            if [ -f "$f" ]; then UTILS="$f"; break; fi
+          done
+          if [ -z "$UTILS" ]; then
+            UTILS="$(find "$PROJECT_DIR/Python.xcframework/build" -maxdepth 1 -name '*utils*.sh' | head -1)"
+          fi
+          if [ -z "$UTILS" ]; then
+            echo "error: no utils script found in Python.xcframework/build" >&2
+            exit 1
+          fi
+          source "$UTILS"
+          if ! type install_python >/dev/null 2>&1; then
+            echo "error: install_python not defined by $UTILS; functions available:" >&2
+            declare -F >&2
+            exit 1
+          fi
+          install_python Python.xcframework app app_packages
