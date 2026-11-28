@@ -1,6 +1,5 @@
 #import "PythonBridge.h"
 #import <Python/Python.h>
-#import <dispatch/dispatch.h>
 
 // Derived from the Python.h you build against, so it can never drift.
 #define PY_VER_STRING [NSString stringWithFormat:@"%d.%d", PY_MAJOR_VERSION, PY_MINOR_VERSION]
@@ -10,69 +9,9 @@ static NSError *MakeError(NSString *message) {
                            userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
-static SealPadJSEvaluator gJavaScriptEvaluator = nil;
-
-/// Python -> Swift -> JavaScriptCore callback. Python invokes this from its
-/// worker thread; JavaScriptCore itself is confined to the main thread.
-static PyObject *SealPadEvaluateJavaScript(PyObject *self, PyObject *args) {
-    const char *utf8Script = NULL;
-    if (!PyArg_ParseTuple(args, "s", &utf8Script)) return NULL;
-
-    NSString *script = [NSString stringWithUTF8String:utf8Script];
-    if (!script || !gJavaScriptEvaluator) {
-        PyErr_SetString(PyExc_RuntimeError, "SealPad JavaScriptCore bridge is not installed");
-        return NULL;
-    }
-
-    __block NSString *result = nil;
-    void (^evaluate)(void) = ^{
-        result = gJavaScriptEvaluator(script);
-    };
-
-    if ([NSThread isMainThread]) {
-        evaluate();
-    } else {
-        Py_BEGIN_ALLOW_THREADS
-        dispatch_sync(dispatch_get_main_queue(), evaluate);
-        Py_END_ALLOW_THREADS
-    }
-
-    if (!result) {
-        PyErr_SetString(PyExc_RuntimeError, "JavaScriptCore evaluation failed");
-        return NULL;
-    }
-    return PyUnicode_FromString(result.UTF8String ?: "");
-}
-
-static PyMethodDef SealPadNativeMethods[] = {
-    {"evaluate_javascript", SealPadEvaluateJavaScript, METH_VARARGS,
-     "Evaluate JavaScript through SealPad's native JavaScriptCore bridge."},
-    {NULL, NULL, 0, NULL}
-};
-
-static struct PyModuleDef SealPadNativeModule = {
-    PyModuleDef_HEAD_INIT, "_sealpad_native", NULL, -1, SealPadNativeMethods,
-    NULL, NULL, NULL, NULL
-};
-
-static PyObject *PyInit__sealpad_native(void) {
-    return PyModule_Create(&SealPadNativeModule);
-}
-
 @implementation PythonBridge
 
-+ (void)setJavaScriptEvaluator:(SealPadJSEvaluator)evaluator {
-    gJavaScriptEvaluator = [evaluator copy];
-}
-
 + (BOOL)startWithResourcePath:(NSString *)resourcePath error:(NSError **)error {
-    // Register our built-in module before CPython starts. This is the only
-    // native callback surface exposed to Python; it is not an arbitrary bridge.
-    if (PyImport_AppendInittab("_sealpad_native", &PyInit__sealpad_native) == -1) {
-        if (error) *error = MakeError(@"Could not register SealPad native module");
-        return NO;
-    }
-
     PyStatus status;
 
     PyPreConfig preconfig;

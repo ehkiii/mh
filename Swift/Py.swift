@@ -38,7 +38,6 @@ enum Py {
         defer { lock.unlock() }
         guard !started else { return }
         do {
-            JavaScriptRuntime.installBridge()
             try PythonBridge.start(withResourcePath: Bundle.main.resourcePath!)
         } catch {
             throw PyError.start(error.localizedDescription)

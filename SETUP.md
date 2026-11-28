@@ -9,11 +9,11 @@ Untested scaffold: I couldn't run Xcode or the Python iOS toolchain in my sandbo
 2. The **Build IPA** workflow runs automatically. You can also run it by hand from the Actions tab.
 3. When it finishes, download the **SealPad-ipa** artifact.
 4. Tag a commit `v1.0` (`git tag v1.0 && git push --tags`) and the IPA is attached to a GitHub Release too.
-5. Install the `.ipa` with AltStore, SideStore or Sideloadly. It's ad-hoc signed, and those tools re-sign it with your Apple ID.
+5. Install the `.ipa` with AltStore, SideStore or Sideloadly. It's unsigned, and those tools sign it with your Apple ID.
 
 The workflow:
 - runs on `macos-26` with the latest stable Xcode (change the label to `macos-latest` if `macos-26` isn't available to you)
-- downloads the official python.org iOS XCframework for Python 3.13 (the newest 3.13.x)
+- downloads the official python.org iOS XCframework for Python 3.15 (the newest 3.15.x)
 - installs yt-dlp, its exact pinned yt-dlp-ejs, and certifi from PyPI, and fails if any native modules sneak in
 - generates the Xcode project from `project.yml` with XcodeGen, so there is no `.xcodeproj` to maintain
 - builds, zips the app into `SealPad.ipa`, and uploads it
@@ -44,4 +44,4 @@ Downloads land in **Files › On My iPad › SealPad › Downloads**.
 3. **Background downloads.** The screen is kept awake while downloading because iOS suspends the app otherwise.
 4. **Cookies.** Drop a Netscape `cookies.txt` at `Application Support/SealPad/cookies.txt`. A WKWebView login flow can come later.
 5. **Updates.** "Check for updates" pulls yt-dlp and its pinned yt-dlp-ejs from PyPI, verifies the SHA-256, and activates it on the next launch. A broken update falls back to the bundled copy.
-6. **CI signing.** The IPA is ad-hoc signed. If the "Process Python libraries" step complains about the signing identity, tell me and I'll adjust it.
+6. **CI signing.** The IPA is built unsigned (`CODE_SIGNING_ALLOWED=NO`). The "Process Python libraries" step in `project.yml` exports an ad-hoc identity so `install_python` can still sign the Python extension frameworks. Both fixes came from your working repo.

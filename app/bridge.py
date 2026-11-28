@@ -74,28 +74,12 @@ def configure(a):
     except ImportError:
         pass
     _activate_updated()
-    # Fail early if the native callback was not installed before CPython boot.
-    # The value is also useful in the app's startup diagnostics.
-    from _sealpad_native import evaluate_javascript
-    js_probe = evaluate_javascript("1 + 1")
-    if js_probe not in ("2", "\"2\""):
-        raise RuntimeError(f"JavaScriptCore self-test returned {js_probe!r}, expected '2'")
-    return {"version": _version(), "javascriptcore": "ready"}
+    return {"version": _version()}
 
 
 @_guard
 def version(_a):
     return {"version": _version()}
-
-
-@_guard
-def javascript_test(a):
-    """Evaluate a small expression through the native JavaScriptCore bridge."""
-    from _sealpad_native import evaluate_javascript
-    expression = a.get("expression", "1 + 1")
-    if not isinstance(expression, str) or len(expression) > 100_000:
-        raise ValueError("expression must be a string of at most 100 KB")
-    return {"result": evaluate_javascript(expression)}
 
 
 def _cookiefile():

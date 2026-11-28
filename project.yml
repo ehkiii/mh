@@ -24,7 +24,6 @@ targets:
         buildPhase: resources
 
     dependencies:
-      - sdk: JavaScriptCore.framework
       - framework: Python.xcframework
         embed: true
         codeSign: true
@@ -68,5 +67,14 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           set -ex
+          # CI builds are unsigned overall, but the Python extension frameworks
+          # must still be signed (ad-hoc) or install_python fails.
+          export EXPANDED_CODE_SIGN_IDENTITY="-"
+          export CODE_SIGNING_REQUIRED="YES"
+          # Debug aid: shows the xcframework layout in the CI log
           ls -la "$PROJECT_DIR/Python.xcframework"
           find "$PROJECT_DIR/Python.xcframework" -maxdepth 4 -not -path '*/.*'
+          source "$PROJECT_DIR/Python.xcframework/build/build_utils.sh"
+          # Same call as the CPython docs. app_packages is pure Python, so it is
+          # copied as a plain resource folder and needs no processing.
+          install_python Python.xcframework app

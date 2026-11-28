@@ -2,16 +2,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Evaluates JavaScript on the app's JavaScriptCore runtime. The callback is
-/// invoked on the main thread and may return nil when evaluation fails.
-typedef NSString * _Nullable (^SealPadJSEvaluator)(NSString *script);
-
 /// Minimal CPython embedding layer. Swift talks to Python only through
 /// `callModule:function:argument:` (JSON string in, JSON string out).
 @interface PythonBridge : NSObject
-
-/// Installs the native JavaScript callback before Python is initialized.
-+ (void)setJavaScriptEvaluator:(SealPadJSEvaluator)evaluator;
 
 /// Boots the interpreter. `resourcePath` is Bundle.main.resourcePath.
 + (BOOL)startWithResourcePath:(NSString *)resourcePath error:(NSError **)error;
