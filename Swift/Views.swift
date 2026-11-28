@@ -67,6 +67,8 @@ struct DownloadsView: View {
     @State private var urlText = ""
     @State private var mode: DownloadMode = .video
     @State private var showFormats = false
+    @AppStorage("videoQuality") private var qualityRaw = VideoQuality.best.rawValue
+    @AppStorage("audioFormat") private var audioRaw = AudioFormat.m4a.rawValue
 
     private var trimmed: String { urlText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -107,6 +109,43 @@ struct DownloadsView: View {
         }
     }
 
+    @ViewBuilder private var optionsRow: some View {
+        HStack(spacing: 12) {
+            if mode == .video {
+                Menu {
+                    Picker("Quality", selection: $qualityRaw) {
+                        ForEach(VideoQuality.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                } label: {
+                    optionLabel("Quality", VideoQuality(rawValue: qualityRaw)?.title ?? "Best available")
+                }
+                optionLabel("Format", "MP4").opacity(0.7)
+            } else {
+                Menu {
+                    Picker("Format", selection: $audioRaw) {
+                        ForEach(AudioFormat.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    Button("MP3 (needs ffmpeg, not built in yet)") {}
+                        .disabled(true)
+                } label: {
+                    optionLabel("Format", AudioFormat(rawValue: audioRaw)?.title ?? "M4A (AAC)")
+                }
+            }
+        }
+    }
+
+    private func optionLabel(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Text(value).bold().lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
     private var inputArea: some View {
         GlassEffectContainer(spacing: 14) {
             VStack(spacing: 14) {
@@ -131,9 +170,13 @@ struct DownloadsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                optionsRow
+
                 HStack(spacing: 12) {
                     Button {
-                        manager.start(url: trimmed, mode: mode)
+                        manager.start(url: trimmed, mode: mode,
+                                      quality: VideoQuality(rawValue: qualityRaw) ?? .best,
+                                      audio: AudioFormat(rawValue: audioRaw) ?? .m4a)
                         urlText = ""
                     } label: {
                         Label("Download", systemImage: "arrow.down")
@@ -182,6 +225,11 @@ struct DownloadRow: View {
             case .downloading:
                 ProgressView(value: item.progress).tint(.white)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
+            case .merging:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Merging video and audio…").font(.caption).foregroundStyle(.secondary)
+                }
             case .finished:
                 Label("Saved to Files › SealPad › Downloads", systemImage: "checkmark.circle.fill")
                     .font(.caption).foregroundStyle(.green)
@@ -201,7 +249,7 @@ struct DownloadRow: View {
     }
 
     @ViewBuilder private var trailingControl: some View {
-        if item.isActive {
+        if item.isActive && item.state != .merging {
             Button("Cancel", systemImage: "xmark.circle.fill") { manager.cancel(item.id) }
                 .labelStyle(.iconOnly)
                 .font(.title2)
@@ -266,7 +314,7 @@ struct FormatPickerView: View {
                                 if usable(info).isEmpty {
                                     Text(showAll
                                          ? "yt-dlp found no formats for this link."
-                                         : "No single-file formats. Turn on “Show all formats” to see everything yt-dlp found.")
+                                         : "Nothing this app can save directly. Turn on “Show all formats” to see everything yt-dlp found.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                         .glassCard(cornerRadius: 20)
                                 }
@@ -301,9 +349,15 @@ struct FormatPickerView: View {
     }
 
     private func usable(_ info: MediaInfo) -> [FormatInfo] {
-        let list = showAll ? info.formats : (mode == .audio
-            ? info.formats.filter { $0.hasAudio && !$0.hasVideo }
-            : info.formats.filter { $0.hasAudio && $0.hasVideo })
+        let list: [FormatInfo]
+        if showAll {
+            list = info.formats
+        } else if mode == .audio {
+            list = info.formats.filter { $0.hasAudio && !$0.hasVideo }
+        } else {
+            // ready-made video+audio files, plus H.264 video that we merge with audio ourselves
+            list = info.formats.filter { ($0.hasAudio && $0.hasVideo) || $0.isMuxableVideo }
+        }
         return list.sorted { ($0.height ?? 0, $0.tbr ?? 0) > ($1.height ?? 0, $1.tbr ?? 0) }
     }
 
@@ -319,7 +373,7 @@ struct FormatRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(format.resolution ?? "audio only").font(.body)
-                Text([format.ext, format.note].compactMap { $0 }.joined(separator: " · "))
+                Text([format.ext, format.note, format.isMuxableVideo ? "+ best audio, merged" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()

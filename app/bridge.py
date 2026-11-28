@@ -158,41 +158,108 @@ def _has(codec):
     return codec not in (None, "none")
 
 
-def _make_selector(mode, stats):
+def _is_http(f):
+    return f.get("protocol") in ("https", "http")
+
+
+def _muxable_video(f):
+    """H.264 video-only in mp4: AVFoundation can merge it with AAC on the device, no re-encode."""
+    return (_has(f.get("vcodec")) and not _has(f.get("acodec"))
+            and f.get("ext") == "mp4"
+            and str(f.get("vcodec")).startswith(("avc1", "h264"))
+            and _is_http(f))
+
+
+def _aac_audio(f):
+    return (_has(f.get("acodec")) and not _has(f.get("vcodec"))
+            and f.get("ext") == "m4a" and _is_http(f))
+
+
+def _abr(f):
+    return f.get("abr") or f.get("tbr") or 0
+
+
+def _make_selector(a, stats):
     """Format selector that inspects the real format list first (like -F), then picks.
 
-    Without ffmpeg we can't merge, so we only pick a single-file format:
-    best video+audio for "video", best audio-only for "audio".
+    No ffmpeg on iOS, so we only choose things the device can finish itself:
+      * a single file that already has video+audio, or
+      * H.264/mp4 video-only + AAC/m4a audio -> downloaded as two files; Swift merges
+        them with AVFoundation (stats["merge"] tells the worker to flag that).
+    Options (all optional): mode (video|audio), format_id (pinned), max_height,
+    audio_format (m4a|original).
     """
+    mode = a.get("mode")
+    pinned = a.get("format_id")
+    max_h = int(a.get("max_height") or 0)
+    audio_pref = a.get("audio_format") or "m4a"
+
     def selector(ctx):
         fmts = [f for f in ctx["formats"]
                 if f.get("ext") != "mhtml" and f.get("format_note") != "storyboard"]
-        combined = [f for f in fmts if _has(f.get("vcodec")) and _has(f.get("acodec"))]
+        combined = [f for f in fmts if _has(f.get("vcodec")) and _has(f.get("acodec")) and _is_http(f)]
         video_only = [f for f in fmts if _has(f.get("vcodec")) and not _has(f.get("acodec"))]
         audio_only = [f for f in fmts if _has(f.get("acodec")) and not _has(f.get("vcodec"))]
-        stats.update(total=len(fmts), combined=len(combined),
-                     video_only=len(video_only), audio_only=len(audio_only))
+        aac_pool = [f for f in audio_only if _aac_audio(f)]
+        stats.update(total=len(fmts), combined=len(combined), video_only=len(video_only),
+                     audio_only=len(audio_only), aac=len(aac_pool),
+                     muxable=len([f for f in video_only if _muxable_video(f)]))
+        best_aac = max(aac_pool, key=_abr) if aac_pool else None
+
+        def pair(v, au):
+            stats["merge"] = True
+            return {
+                "format_id": f'{v["format_id"]}+{au["format_id"]}',
+                "ext": "mp4",
+                "requested_formats": [v, au],
+                "protocol": f'{v.get("protocol", "https")}+{au.get("protocol", "https")}',
+            }
+
+        # A format the user picked by hand
+        if pinned:
+            f = next((x for x in fmts if x["format_id"] == pinned), None)
+            if f is None:
+                return
+            if _muxable_video(f) and best_aac:
+                yield pair(f, best_aac)
+            else:
+                yield f
+            return
+
         if mode == "audio":
-            pool = audio_only
-            def key(f): return (f.get("ext") == "m4a", f.get("abr") or f.get("tbr") or 0)
-        else:
-            pool = combined
-            def key(f): return (f.get("height") or 0, f.get("ext") == "mp4", f.get("tbr") or 0)
-        if pool:
-            yield max(pool, key=key)
+            pool = (aac_pool or audio_only) if audio_pref == "m4a" else audio_only
+            if pool:
+                yield max(pool, key=_abr)
+            return
+
+        # Video: best of {combined files, muxable video-only (needs AAC audio)}
+        pool_all = list(combined)
+        if best_aac:
+            pool_all += [f for f in video_only if _muxable_video(f)]
+        if not pool_all:
+            return
+        within = [f for f in pool_all if not max_h or (f.get("height") or 0) <= max_h]
+        if within:
+            best = max(within, key=lambda f: (f.get("height") or 0, _has(f.get("acodec")), f.get("tbr") or 0))
+        else:  # everything is above the requested height: take the smallest
+            best = min(pool_all, key=lambda f: f.get("height") or 0)
+        yield best if _has(best.get("acodec")) else pair(best, best_aac)
+
     return selector
 
 
 def _no_format_message(stats, warns):
     total = stats.get("total", 0)
-    msg = (f"No downloadable single-file format. yt-dlp found {total} formats "
-           f"({stats.get('combined', 0)} video+audio, {stats.get('video_only', 0)} video-only, "
-           f"{stats.get('audio_only', 0)} audio-only). ")
+    msg = (f"No format this app can save. yt-dlp found {total} formats "
+           f"({stats.get('combined', 0)} video+audio, {stats.get('video_only', 0)} video-only "
+           f"[{stats.get('muxable', 0)} H.264/mp4], {stats.get('audio_only', 0)} audio-only "
+           f"[{stats.get('aac', 0)} AAC/m4a]). ")
     if total == 0:
         msg += ("Zero formats usually means the site's JavaScript challenge wasn't solved "
                 "(YouTube needs a JS runtime). ")
     else:
-        msg += "Separate video and audio streams need ffmpeg to merge. "
+        msg += ("Without ffmpeg only video+audio files, or H.264 video with AAC audio "
+                "(merged on the device), can be saved. ")
     msg += "Tap Formats to see what exists."
     if warns:
         msg += " yt-dlp said: " + " | ".join(w[:160] for w in warns[-3:])
@@ -233,7 +300,7 @@ def _download_worker(job, opts, stats):
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([job["url"]])
-        emit(type="done", files=files)
+        emit(type="done", files=files, merge=bool(stats.get("merge")))
     except Exception as e:  # noqa: BLE001
         if jid in _cancelled:
             emit(type="cancelled")
@@ -251,12 +318,9 @@ def _download_worker(job, opts, stats):
 def start_download(a):
     out = _cfg["downloads"]
     stats = {}
-    fmt = a.get("format_id")
-    if not fmt:
-        # Look at the real format list first, then pick (single-file only: no ffmpeg yet).
-        fmt = _make_selector(a.get("mode"), stats)
     opts = {
-        "format": fmt,
+        # Looks at the real format list first, then picks (see _make_selector)
+        "format": _make_selector(a, stats),
         "outtmpl": os.path.join(out, "%(title).150B [%(id)s].%(ext)s"),
         "noplaylist": False,
         "concurrent_fragment_downloads": 4,

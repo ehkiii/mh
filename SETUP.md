@@ -40,7 +40,7 @@ Downloads land in **Files › On My iPad › SealPad › Downloads**.
 
 ## Known gaps (next steps)
 1. **YouTube JS challenges.** yt-dlp needs a JS runtime plus yt-dlp-ejs, and iOS can't spawn Deno or Node. Plan: a custom provider that calls JavaScriptCore through the bridge. Non-YouTube sites work without it.
-2. **ffmpeg.** Right now only single-file formats work (no merging, no audio conversion, no embedded thumbnails). Next step is an in-process FFmpeg xcframework.
+2. **ffmpeg.** Video is merged on the device with AVFoundation, which only handles H.264 (mp4) video with AAC (m4a) audio, so YouTube is usually capped at 1080p. VP9/AV1/WebM, MP3 conversion, embedded thumbnails and metadata need an in-process FFmpeg xcframework.
 3. **Background downloads.** The screen is kept awake while downloading because iOS suspends the app otherwise.
 4. **Cookies.** Drop a Netscape `cookies.txt` at `Application Support/SealPad/cookies.txt`. A WKWebView login flow can come later.
 5. **Updates.** "Check for updates" pulls yt-dlp and its pinned yt-dlp-ejs from PyPI, verifies the SHA-256, and activates it on the next launch. A broken update falls back to the bundled copy.
