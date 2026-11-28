@@ -23,10 +23,23 @@ _events = queue.Queue()
 _cancelled = set()
 
 
+class _UserError(Exception):
+    """An error whose message is already written for the user."""
+
+
+def _friendly_error(e, url):
+    if "is not a valid URL" in str(e):
+        return (f"yt-dlp couldn't use this link. It received: {url!r}. "
+                "Paste the full address starting with https://")
+    return f"{type(e).__name__}: {e}"
+
+
 def _guard(fn):
     def wrapper(arg="{}"):
         try:
             return json.dumps(fn(json.loads(arg or "{}")))
+        except _UserError as e:
+            return json.dumps({"error": str(e)})
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
@@ -111,8 +124,12 @@ def extract_info(a):
     }
     if _cookiefile():
         opts["cookiefile"] = _cookiefile()
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.sanitize_info(ydl.extract_info(a["url"], download=False))
+    url = a["url"].strip()
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.sanitize_info(ydl.extract_info(url, download=False))
+    except Exception as e:  # noqa: BLE001
+        raise _UserError(_friendly_error(e, url)) from e
 
     formats = []
     for f in info.get("formats") or []:
@@ -134,7 +151,7 @@ def extract_info(a):
         })
     entries = info.get("entries")
     return {
-        "title": info.get("title") or a["url"],
+        "title": info.get("title") or url,
         "uploader": info.get("uploader"),
         "thumbnail": info.get("thumbnail"),
         "duration": info.get("duration"),
@@ -326,6 +343,8 @@ def _download_worker(job, opts, stats):
             text = f"{type(e).__name__}: {e}"
             if "Requested format is not available" in str(e) or "No video formats found" in str(e):
                 text = _no_format_message(stats, warns)
+            elif "is not a valid URL" in str(e):
+                text = _friendly_error(e, job["url"])
             elif warns and not errors:
                 text += " | " + " | ".join(w[:160] for w in warns[-2:])
             emit(type="error", text=text)
@@ -334,6 +353,7 @@ def _download_worker(job, opts, stats):
 @_guard
 def start_download(a):
     out = _cfg["downloads"]
+    a["url"] = a["url"].strip()
     stats = {}
     opts = {
         # Looks at the real format list first, then picks (see _make_selector)

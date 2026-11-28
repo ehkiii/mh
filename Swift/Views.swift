@@ -67,6 +67,7 @@ struct DownloadsView: View {
     @State private var urlText = ""
     @State private var previewURL = ""
     @State private var showPreview = false
+    @State private var invalidLink = false
 
     private var trimmed: String { urlText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -95,6 +96,7 @@ struct DownloadsView: View {
         }
         .background(AppBackground())
         .navigationTitle("Downloads")
+        .onChange(of: urlText) { _, _ in invalidLink = false }
         .toolbar {
             Button("Clear finished", systemImage: "trash") {
                 manager.items.removeAll { !$0.isActive }
@@ -108,7 +110,12 @@ struct DownloadsView: View {
 
     private func openPreview() {
         guard !trimmed.isEmpty else { return }
-        previewURL = trimmed
+        guard let link = LinkParser.normalize(trimmed) else {
+            invalidLink = true
+            return
+        }
+        invalidLink = false
+        previewURL = link
         showPreview = true
     }
 
@@ -132,6 +139,14 @@ struct DownloadsView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .glassEffect(.regular.interactive(), in: .capsule)
+
+                if invalidLink {
+                    Label("That doesn't look like a link. Paste the full address (https://…).",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 Button {
                     openPreview()
